@@ -33,16 +33,27 @@ def test_loop_triggers_backoff():
 
 
 def test_loop_exhaustion_triggers_replan():
+    """
+    With max_retries=1:
+    - iter 1: first occurrence, no loop
+    - iter 2: repeat → loop detected, backoff retry 1 consumed
+    - iter 3: repeat → loop detected, backoff exhausted → force replan fires HERE
+    After replan, detector is reset so iter 4 is clean again.
+    """
     sg = make_safeguard(max_retries=1)
-    # First repeat — backoff fires (1 retry used)
-    sg.check_and_handle(iteration=1, action="search", args={"q": "x"})
-    sg.check_and_handle(iteration=2, action="search", args={"q": "x"})
-    # Second repeat — escalation fires
-    sg.check_and_handle(iteration=3, action="search", args={"q": "x"})
-    outcome = sg.check_and_handle(iteration=4, action="search", args={"q": "x"})
+
+    sg.check_and_handle(iteration=1, action="search", args={"q": "x"})  # no loop
+    sg.check_and_handle(iteration=2, action="search", args={"q": "x"})  # loop → backoff (retry 1)
+    outcome = sg.check_and_handle(iteration=3, action="search", args={"q": "x"})  # escalation → replan
+
     assert outcome.force_replanned
     assert outcome.replan_result is not None
     assert len(outcome.replan_result.subtasks) > 0
+
+    # After replan, detector is reset — next call is clean
+    clean = sg.check_and_handle(iteration=4, action="search", args={"q": "x"})
+    assert not clean.force_replanned
+    assert not clean.loop_detected
 
 
 def test_summarize_at_iter_15():
