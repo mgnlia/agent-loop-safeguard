@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
-"""Repro script for reliability incident nQgQmIy8Bnjak3GIR5DNN.
+"""Repro script for reliability incident dJrlI9zQTDm5WWbVdZsoU.
 
-Shows BEFORE (no safeguard) repetitive tool loop behavior and AFTER
-(loop suppression via LoopSafeguard with summarize+backoff+forced re-plan).
+This script provides deterministic BEFORE/AFTER evidence for suppression of
+repeated `task_manage:list` loop signatures (`exact_cycle_repeat`-class behavior).
 """
 
 from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+# Make script runnable from repo root without requiring package install.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from loop_safeguard import LoopSafeguard
 from loop_safeguard.backoff import BackoffConfig
@@ -16,10 +24,12 @@ from loop_safeguard.summarizer import SummarizerConfig
 
 def run_before() -> None:
     print("=== BEFORE (no safeguard) ===")
+    print("signature=tool_call|task_manage|{'action': 'list'}")
     for i in range(1, 9):
         print(
             f"iter={i} action=tool_call tool=task_manage args={{'action': 'list'}} "
-            "result=repeat_signature_unchecked"
+            "result=repeat_signature_unchecked replanned=False "
+            "exact_cycle_repeat_suppressed=False"
         )
     print("note=no loop-break condition; sequence would continue until hard cap")
 
@@ -28,7 +38,7 @@ def run_after() -> None:
     print("\n=== AFTER (with LoopSafeguard) ===")
 
     cfg = SafeguardConfig(
-        detector=LoopDetectorConfig(window_size=6, repeat_threshold=3),
+        detector=LoopDetectorConfig(window_size=6, repeat_threshold=2),
         backoff=BackoffConfig(
             base_seconds=0.1,
             multiplier=2.0,
@@ -47,7 +57,7 @@ def run_after() -> None:
     ]
 
     print("context_len_before", len(context))
-    context = safeguard.maybe_summarize(15, context, {"task_id": "nQgQmIy8Bnjak3GIR5DNN"})
+    context = safeguard.maybe_summarize(15, context, {"task_id": "dJrlI9zQTDm5WWbVdZsoU"})
     print("context_len_after", len(context))
     print("summary_injected", bool(context and context[0].get("action") == "__context_summary__"))
 
@@ -60,15 +70,19 @@ def run_after() -> None:
             context=context,
             task={
                 "title": "Investigate repeated task_manage:list loop",
-                "description": "Apply loop suppression and safe fallback",
+                "description": "Apply loop suppression and safe terminal fallback",
             },
         )
+        suppressed = outcome.backoff_applied or outcome.force_replanned
         print(
             f"iter={i} loop={outcome.loop_detected} backoff_applied={outcome.backoff_applied} "
-            f"replanned={outcome.force_replanned}"
+            f"replanned={outcome.force_replanned} exact_cycle_repeat_suppressed={suppressed}"
         )
         if outcome.replan_result:
-            print("subtasks", len(outcome.replan_result.subtasks))
+            print(
+                "terminal_fallback=True reason=loop_escalation "
+                f"subtasks={len(outcome.replan_result.subtasks)}"
+            )
 
     print("loop_count", len(safeguard.detector.loop_events))
     print("replan_count", len(safeguard.planner.replan_history))
