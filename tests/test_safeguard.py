@@ -4,7 +4,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
 from loop_safeguard import LoopSafeguard
 from loop_safeguard.backoff import BackoffConfig
 from loop_safeguard.detector import LoopDetectorConfig
@@ -90,8 +89,9 @@ def test_repro_script_outputs_before_after_markers_and_replans():
     out = proc.stdout
     assert "=== BEFORE (no safeguard) ===" in out
     assert "=== AFTER (with LoopSafeguard) ===" in out
-    assert "context_keys_after" in out
-    assert "summarized True" in out
+    assert "context_len_before" in out
+    assert "context_len_after" in out
+    assert "summary_injected True" in out
     assert "loop_count" in out
     assert "replan_count" in out
 
