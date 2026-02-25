@@ -1,4 +1,9 @@
 """Integration tests for LoopSafeguard facade."""
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 from loop_safeguard import LoopSafeguard
 from loop_safeguard.backoff import BackoffConfig
@@ -61,3 +66,35 @@ def test_summarize_at_iter_15():
     ctx = [{"action": f"act_{i}", "result": "ok"} for i in range(20)]
     new_ctx = sg.maybe_summarize(15, ctx)
     assert new_ctx[0]["action"] == "__context_summary__"
+
+
+def test_repro_script_outputs_before_after_markers_and_replans():
+    """Smoke-test the incident repro script used for nQgQmIy8Bnjak3GIR5DNN evidence."""
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "repro_task_manage_list_loop.py"
+    assert script.exists(), f"missing repro script: {script}"
+
+    env = os.environ.copy()
+    pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = str(repo_root) if not pythonpath else f"{repo_root}:{pythonpath}"
+
+    proc = subprocess.run(
+        [sys.executable, str(script)],
+        cwd=str(repo_root),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    out = proc.stdout
+    assert "=== BEFORE (no safeguard) ===" in out
+    assert "=== AFTER (with LoopSafeguard) ===" in out
+    assert "context_keys_after" in out
+    assert "summarized True" in out
+    assert "loop_count" in out
+    assert "replan_count" in out
+
+    # Ensure suppression actually triggered at least one replan
+    replan_lines = [line for line in out.splitlines() if "replanned=True" in line]
+    assert len(replan_lines) >= 1
