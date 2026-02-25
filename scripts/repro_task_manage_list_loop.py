@@ -8,6 +8,10 @@ Shows BEFORE (no safeguard) repetitive tool loop behavior and AFTER
 from __future__ import annotations
 
 from loop_safeguard import LoopSafeguard
+from loop_safeguard.backoff import BackoffConfig
+from loop_safeguard.detector import LoopDetectorConfig
+from loop_safeguard.safeguard import SafeguardConfig
+from loop_safeguard.summarizer import SummarizerConfig
 
 
 def run_before() -> None:
@@ -22,24 +26,30 @@ def run_before() -> None:
 
 def run_after() -> None:
     print("\n=== AFTER (with LoopSafeguard) ===")
-    safeguard = LoopSafeguard(
-        detector_window=6,
-        detector_threshold=3,
-        backoff_base_s=0.1,
-        backoff_cap_s=0.2,
-        backoff_max_retries=2,
-        sleep_on_backoff=False,
-    )
 
-    context = {
-        "goal": "stabilize reliability lane",
-        "trace_blob": "x" * 4000,
-        "debug_raw": "verbose stack dump",
-    }
-    print("context_keys_before", sorted(context.keys()))
+    cfg = SafeguardConfig(
+        detector=LoopDetectorConfig(window_size=6, repeat_threshold=3),
+        backoff=BackoffConfig(
+            base_seconds=0.1,
+            multiplier=2.0,
+            cap_seconds=0.2,
+            max_retries=2,
+            jitter=False,
+        ),
+        summarizer=SummarizerConfig(trigger_iteration=15, repeat_every=10, max_context_entries=20),
+    )
+    safeguard = LoopSafeguard(config=cfg, dry_run=True)
+
+    context = [
+        {"action": "goal", "result": "stabilize reliability lane"},
+        {"action": "trace_blob", "result": "x" * 4000},
+        {"action": "debug_raw", "result": "verbose stack dump"},
+    ]
+
+    print("context_len_before", len(context))
     context = safeguard.maybe_summarize(15, context, {"task_id": "nQgQmIy8Bnjak3GIR5DNN"})
-    print("context_keys_after", sorted(context.keys()))
-    print("summarized", context.get("__summarized__", False))
+    print("context_len_after", len(context))
+    print("summary_injected", bool(context and context[0].get("action") == "__context_summary__"))
 
     for i in range(1, 9):
         outcome = safeguard.check_and_handle(
@@ -48,20 +58,20 @@ def run_after() -> None:
             tool="task_manage",
             args={"action": "list"},
             context=context,
-            task=(
-                "Investigate repeated task_manage:list loop; "
-                "apply loop suppression and safe fallback"
-            ),
+            task={
+                "title": "Investigate repeated task_manage:list loop",
+                "description": "Apply loop suppression and safe fallback",
+            },
         )
         print(
-            f"iter={i} loop={outcome.loop_detected} backoff={outcome.backoff_delay_s:.3f} "
-            f"replanned={outcome.force_replanned} escalated={outcome.escalated}"
+            f"iter={i} loop={outcome.loop_detected} backoff_applied={outcome.backoff_applied} "
+            f"replanned={outcome.force_replanned}"
         )
         if outcome.replan_result:
-            print("subtasks", len(outcome.replan_result.subtasks), outcome.replan_result.subtasks)
+            print("subtasks", len(outcome.replan_result.subtasks))
 
-    print("loop_count", safeguard.loop_count)
-    print("replan_count", safeguard.replan_count)
+    print("loop_count", len(safeguard.detector.loop_events))
+    print("replan_count", len(safeguard.planner.replan_history))
 
 
 def main() -> None:
